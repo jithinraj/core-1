@@ -4164,6 +4164,130 @@ void SwRootFrame::InvalidateAllObjPos()
     }
 }
 
+static void UnHideRedlines(SwRootFrame & rLayout,
+        SwNodes & rNodes, SwNode const& rEndOfSectionNode)
+{
+    assert(rEndOfSectionNode.IsEndNode());
+    for (sal_uLong i = rEndOfSectionNode.StartOfSectionNode()->GetIndex() + 1;
+         i < rEndOfSectionNode.GetIndex(); ++i)
+    {
+        SwNode & rNode(*rNodes[i]);
+        if (rNode.IsTextNode()) // only text nodes are 1st node of a merge
+        {
+            SwTextNode & rTextNode(*rNode.GetTextNode());
+            SwIterator<SwTextFrame, SwTextNode, sw::IteratorMode::UnwrapMulti> aIter(rTextNode);
+            std::vector<SwTextFrame*> frames;
+            for (SwTextFrame * pFrame = aIter.First(); pFrame; pFrame = aIter.Next())
+            {
+                if (pFrame->getRootFrame() == &rLayout)
+                {
+                    frames.push_back(pFrame);
+                }
+            }
+            // this messes with pRegisteredIn so do it outside SwIterator
+            for (SwTextFrame * pFrame : frames)
+            {
+                if (rLayout.IsHideRedlines())
+                {
+                    assert(!pFrame->GetMergedPara() ||
+                        rNode.GetRedlineMergeFlag() == SwNode::Merge::NonFirst);
+                    if (rNode.IsCreateFrameWhenHidingRedlines())
+                    {
+                        pFrame->SetMergedPara(CheckParaRedlineMerge(*pFrame, rTextNode));
+                        // ??? TODO flys etc.
+                    }
+                }
+                else
+                {
+                    if (pFrame->GetMergedPara())
+                    {
+                        pFrame->SetMergedPara(nullptr);
+                        // ??? TODO flys etc.
+                        // ??? TODO recreate? or is invalidate enough?
+                    }
+                }
+            }
+        }
+        if (!rNode.IsCreateFrameWhenHidingRedlines())
+        {
+            if (rLayout.IsHideRedlines())
+            {
+                if (rNode.IsContentNode())
+                {
+                    static_cast<SwContentNode&>(rNode).DelFrames(); // FIXME only those in this layout?
+                }
+                else if (rNode.IsTableNode())
+                {
+                    static_cast<SwTableNode&>(rNode).DelFrames(); // FIXME only those in this layout?
+                }
+                else if (rNode.IsSectionNode())
+                {
+                    static_cast<SwSectionNode&>(rNode).DelFrames(); // FIXME only those in this layout?
+                }
+            }
+            else
+            {
+                sal_uLong j = i + 1;
+                for ( ; j < rEndOfSectionNode.GetIndex(); ++j)
+                {
+                    if (rNodes[j]->IsCreateFrameWhenHidingRedlines())
+                    {
+                        break;
+                    }
+                }
+                // call MakeFrames once, because sections/tables
+                // InsertCnt_ also checks for hidden sections
+                SwNodeIndex const start(rNodes, i);
+                SwNodeIndex const end(rNodes, j);
+                ::MakeFrames(rLayout.GetFormat()->GetDoc(), start, end);
+                i = j - 1; // will be incremented again
+            }
+        }
+    }
+}
+
+static void UnHideRedlinesExtras(SwRootFrame & rLayout,
+        SwNodes & rNodes, SwNode const& rEndOfExtraSectionNode)
+{
+    assert(rEndOfExtraSectionNode.IsEndNode());
+    for (sal_uLong i = rEndOfExtraSectionNode.StartOfSectionNode()->GetIndex()
+            + 1; i < rEndOfExtraSectionNode.GetIndex(); ++i)
+    {
+        SwNode const& rStartNode(*rNodes[i]);
+        assert(rStartNode.IsStartNode());
+        assert(rStartNode.GetRedlineMergeFlag() == SwNode::Merge::None);
+        SwNode const& rEndNode(*rStartNode.EndOfSectionNode());
+        i = rEndNode.GetIndex();
+        bool bSkip(false);
+        for (sal_uLong j = rStartNode.GetIndex() + 1; j < i; ++j)
+        {
+            // note: SwStartNode has no way to access the frames, so check
+            // whether the first content-node inside the section has frames
+            SwNode const& rNode(*rNodes[j]);
+            assert(rNode.GetRedlineMergeFlag() == SwNode::Merge::None);
+            if (rNode.IsSectionNode() &&
+                static_cast<SwSectionNode const&>(rNode).GetSection().IsHiddenFlag())
+            {   // skip hidden sections - they can be inserted in fly-frames :(
+                j = rNode.EndOfSectionNode()->GetIndex();
+                continue;
+            }
+            if (rNode.IsContentNode())
+            {
+                SwContentNode const& rCNode(static_cast<SwContentNode const&>(rNode));
+                if (!rCNode.getLayoutFrame(&rLayout))
+                {   // ignore footnote/fly/header/footer with no layout frame
+                    bSkip = true; // they will be created from scratch later if needed
+                }
+                break;
+            }
+        }
+        if (!bSkip)
+        {
+            UnHideRedlines(rLayout, rNodes, rEndNode);
+        }
+    }
+}
+
 void SwRootFrame::SetHideRedlines(bool const bHideRedlines)
 {
     if (bHideRedlines == mbHideRedlines)
@@ -4171,7 +4295,7 @@ void SwRootFrame::SetHideRedlines(bool const bHideRedlines)
         return;
     }
     mbHideRedlines = bHideRedlines;
-    SwNodes const& rNodes(GetFormat()->GetDoc()->GetNodes());
+    SwNodes /*const*/& rNodes(GetFormat()->GetDoc()->GetNodes());
     // Hide->Show: clear MergedPara, create frames
     // Show->Hide: call CheckParaRedlineMerge, delete frames
     // TODO how to traverse
@@ -4182,41 +4306,30 @@ void SwRootFrame::SetHideRedlines(bool const bHideRedlines)
     //        is order of these predictable? flys not anchored in content?
     // * ideally should call something existing that tries to create everything?
     //      - is that done automatically somewhere already?
+    //          InsertCnt_
+    //              ... always creates, no option to skip nodes
+    //              ... could call that with appropriate start/end per redline, might be easiest?
     // * other direction ->Hide - delete frames!
     // in-order traversal should init flags in nodes *before* the nodes are found
-    for (sal_uLong i = 0; i < rNodes.Count(); ++i)
-    {
-        SwNode *const pNode(rNodes[i]);
-        if (pNode->IsTextNode())
-        {
-            SwTextNode & rTextNode(*pNode->GetTextNode());
-            SwIterator<SwTextFrame, SwTextNode, sw::IteratorMode::UnwrapMulti> aIter(rTextNode);
-            std::vector<SwTextFrame*> frames;
-            for (SwTextFrame * pFrame = aIter.First(); pFrame; pFrame = aIter.Next())
-            {
-                if (pFrame->getRootFrame() == this)
-                {
-                    frames.push_back(pFrame);
-                }
-            }
-            // this messes with pRegisteredIn so do it outside SwIterator
-            for (SwTextFrame * pFrame : frames)
-            {
-                if (mbHideRedlines && pNode->IsCreateFrameWhenHidingRedlines())
-                {
-                    pFrame->SetMergedPara(CheckParaRedlineMerge(*pFrame, rTextNode));
-                }
-                else
-                {
-                    if (pFrame->GetMergedPara())
-                    {
-                        pFrame->SetMergedPara(nullptr);
-                        rTextNode.DelFrames(); // FIXME only those in this layout?
-                    }
-                }
-            }
-        }
-    }
+    // ... footnotes
+    //  * are in content so should be created by Check + invalidation of text-frame
+    //    ... unfortunately are not deleted by invalidation???
+    //  * not in flys or header/footer
+    // ... header/footer
+    // ... flys
+    //  A on existing merged frames, must move
+    //  B in delete RL, must add to existing frame
+    //  C in delete RL, Hidden node, must create
+    //  * for new frames, created by MakeFrames?
+    //  * flys on existing merged frames: how to move to new frames?
+    //      * delete frames?
+    //  * flys anchored in flys : arrgh
+    //  * problem is flys that *did* already exist but with redlines in them
+    //    ... flys that don't exist are created by MakeFrames (and completely!)
+    UnHideRedlinesExtras(*this, rNodes, rNodes.GetEndOfInserts());
+    UnHideRedlinesExtras(*this, rNodes, rNodes.GetEndOfAutotext());
+    UnHideRedlines(*this, rNodes, rNodes.GetEndOfContent());
+
     InvalidateAllContent(SwInvalidateFlags::Size); // ??? TODO what to invalidate?
 }
 
