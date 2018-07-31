@@ -2425,7 +2425,7 @@ void SwTableNode::MakeOwnFrames(SwNodeIndex* pIdxBehind)
     }
 }
 
-void SwTableNode::DelFrames()
+void SwTableNode::DelFrames(SwRootFrame const*const pLayout)
 {
     /* For a start, cut out and delete the TabFrames (which will also delete the Columns and Rows)
        The TabFrames are attached to the FrameFormat of the SwTable.
@@ -2437,7 +2437,7 @@ void SwTableNode::DelFrames()
     {
         bool bAgain = false;
         {
-            if ( !pFrame->IsFollow() )
+            if (!pFrame->IsFollow() && (!pLayout || pLayout == pFrame->getRootFrame()))
             {
                 while ( pFrame->HasFollow() )
                     pFrame->JoinAndDelFollows();
