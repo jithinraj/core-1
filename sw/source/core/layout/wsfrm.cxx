@@ -4392,7 +4392,6 @@ static void UnHideRedlinesExtras(SwRootFrame & rLayout,
             // note: SwStartNode has no way to access the frames, so check
             // whether the first content-node inside the section has frames
             SwNode const& rNode(*rNodes[j]);
-            assert(rNode.GetRedlineMergeFlag() == SwNode::Merge::None);
             if (rNode.IsSectionNode() &&
                 static_cast<SwSectionNode const&>(rNode).GetSection().IsHiddenFlag())
             {   // skip hidden sections - they can be inserted in fly-frames :(
