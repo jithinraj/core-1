@@ -30,6 +30,7 @@
 #include <viewopt.hxx>
 #include <IDocumentSettingAccess.hxx>
 #include <IDocumentFieldsAccess.hxx>
+#include <IDocumentRedlineAccess.hxx>
 #include <fesh.hxx>
 #include <docsh.hxx>
 #include <ftninfo.hxx>
@@ -4422,7 +4423,12 @@ void SwRootFrame::SetHideRedlines(bool const bHideRedlines)
         return;
     }
     mbHideRedlines = bHideRedlines;
-    SwNodes /*const*/& rNodes(GetFormat()->GetDoc()->GetNodes());
+    SwDoc & rDoc(*GetFormat()->GetDoc());
+    if (rDoc.getIDocumentRedlineAccess().GetRedlineTable().empty())
+    {
+        return;
+    }
+    SwNodes /*const*/& rNodes(rDoc.GetNodes());
     // Hide->Show: clear MergedPara, create frames
     // Show->Hide: call CheckParaRedlineMerge, delete frames
     // TODO how to traverse
