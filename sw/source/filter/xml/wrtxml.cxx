@@ -45,6 +45,7 @@
 #include <IDocumentRedlineAccess.hxx>
 #include <IDocumentStatistics.hxx>
 #include <IDocumentLayoutAccess.hxx>
+#include <rootfrm.hxx>
 #include <docstat.hxx>
 #include <docsh.hxx>
 
@@ -181,8 +182,16 @@ ErrCode SwXMLWriter::Write_( const uno::Reference < task::XStatusIndicator >& xS
     // save show redline mode ...
     const OUString sShowChanges("ShowChanges");
     RedlineFlags nRedlineFlags = m_pDoc->getIDocumentRedlineAccess().GetRedlineFlags();
-    xInfoSet->setPropertyValue( sShowChanges,
-        makeAny( IDocumentRedlineAccess::IsShowChanges( nRedlineFlags ) ) );
+    bool isShowChanges;
+    if (getenv("SW_REDLINEHIDE"))
+    {   // TODO: ideally this would be stored per-view...
+        isShowChanges = !m_pDoc->getIDocumentLayoutAccess().GetCurrentLayout()->IsHideRedlines();
+    }
+    else
+    {
+        isShowChanges = IDocumentRedlineAccess::IsShowChanges(nRedlineFlags);
+    }
+    xInfoSet->setPropertyValue(sShowChanges, makeAny(isShowChanges));
     // ... and hide redlines for export
     nRedlineFlags &= ~RedlineFlags::ShowMask;
     nRedlineFlags |= RedlineFlags::ShowInsert;
