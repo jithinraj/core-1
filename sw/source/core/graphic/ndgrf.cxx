@@ -401,11 +401,6 @@ const GraphicObject* SwGrfNode::GetReplacementGrfObj() const
     return mpReplacementGraphic.get();
 }
 
-SwContentNode *SwGrfNode::SplitContentNode( const SwPosition & )
-{
-    return this;
-}
-
 SwGrfNode * SwNodes::MakeGrfNode( const SwNodeIndex & rWhere,
                                 const OUString& rGrfName,
                                 const OUString& rFltName,
